@@ -28,7 +28,7 @@ Acados installation instructions can be found [here](https://docs.acados.org/ins
 Clone the repository:
 
 ```bash
-git clone https://github.com/acp-lab/crazyflie-acados-pybullet.git
+git clone https://github.com/acp-lab/rbe595-optimal-control-project.git
 cd crazyflie-acados-pybullet
 ```
 Run the simulation
