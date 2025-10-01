@@ -29,7 +29,7 @@ Clone the repository:
 
 ```bash
 git clone https://github.com/acp-lab/rbe595-optimal-control-project.git
-cd crazyflie-acados-pybullet
+cd rbe595-optimal-control-project
 ```
 Run the simulation
 ```bash
