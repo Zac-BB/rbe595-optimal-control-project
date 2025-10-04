@@ -236,7 +236,7 @@ class MPC:
 
 
         return {
-            'thrust': 10,
+            'thrust': 0.73575*2,
             'moment_x': 0,
             'moment_y': 0, 
             'moment_z': 0
@@ -268,17 +268,17 @@ class MPC:
         ])
         ocp.cost.cost_type = "LINEAR_LS"
         ocp.cost.W = W
-
-        Vx = np.eye(nx)
-        ocp.cost.Vx = Vx
-
-        Vu = np.zeros((ny,nu))
-        ocp.cost.Vu = Vu
+        ocp.cost.yref = np.zeros(ny)
+        ocp.cost.Vx = np.vstack([np.eye(nx), np.zeros((nu, nx))])
+        ocp.cost.Vu = np.vstack([np.zeros((nx, nu)), np.eye(nu)])
 
         ocp.cost.cost_type_e = "LINEAR_LS"
         ocp.cost.W_e = Q
         ocp.cost.Vx_e = np.eye(nx)
-    
+        ocp.cost.yref_e = np.zeros(nx)
+        # ocp.constraints.lbu = np.array([0, -moment_max, -moment_max, -moment_max])
+        # ocp.constraints.ubu = np.array([thrust_max, moment_max, moment_max, moment_max])
+        # ocp.constraints.idxbu = np.array([0, 1, 2, 3])
 
         ocp.solver_options.qp_solver = "FULL_CONDENSING_HPIPM"
         ocp.solver_options.hessian_approx = "GAUSS_NEWTON"
@@ -422,11 +422,11 @@ if __name__ == "__main__":
         line1.set_data(mpc.simX1[:t+1, 0], mpc.simX1[:t+1, 1])
         line1.set_3d_properties(mpc.simX1[:t+1, 2])
         plt.draw()
-        plt.pause(0.01)  # adjust speed
+        plt.pause(0.2)  # adjust speed
 
     ax.legend()
     ax.grid(True)
-
+    print(mpc.simX1)
     plt.show()
     
     p.disconnect()
