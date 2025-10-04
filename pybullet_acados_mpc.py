@@ -12,18 +12,13 @@ import matplotlib.pyplot as plt
 class CrazyflieController:
     def __init__(self, urdf_path="./cf2x.urdf"):
         # Physical parameters from URDF
-        self.mass = 0.0281 # 0.027  # kg
+        self.mass = 0.027 # 0.027  # kg
         self.arm_length = 0.0397  # m
         self.kf = 3.16e-10  # thrust coefficient
         self.km = 7.94e-12  # moment coefficient
         self.max_rpm = 21000  # typical max RPM for CF2.0
         omega_max = self.max_rpm * 2*np.pi / 60.0  # rad/s
         self.max_thrust_per_motor = self.kf * (omega_max ** 2)
-        
-        # Inertia
-        self.Ixx = 3.788e-05 # 1.4e-5
-        self.Iyy = 3.788e-05 # 1.4e-5
-        self.Izz = 7.144e-05 # 2.17e-5
         
         # Initialize PyBullet
         self.setup_pybullet(urdf_path)
@@ -56,7 +51,7 @@ class CrazyflieController:
         start_pos = [0, 0, 0]
         start_orientation = p.getQuaternionFromEuler([0, 0, 0])
         plane = p.loadURDF("plane.urdf")
-        self.cf_id = p.loadURDF(urdf_path, start_pos, start_orientation)
+        self.cf_id = p.loadURDF(urdf_path, start_pos, start_orientation, flags=p.URDF_USE_INERTIA_FROM_FILE)
         
         # Get motor link indices (prop links)
         self.motor_links = []
