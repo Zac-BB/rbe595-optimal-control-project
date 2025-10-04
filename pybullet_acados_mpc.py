@@ -55,7 +55,7 @@ class CrazyflieController:
         # Load the Crazyflie
         start_pos = [0, 0, 0]
         start_orientation = p.getQuaternionFromEuler([0, 0, 0])
-        plane = p.loadURDF("plane.urdf")
+        plane = p.loadURDF("cf2x.urdf")
         self.cf_id = p.loadURDF(urdf_path, start_pos, start_orientation)
         
         # Get motor link indices (prop links)
@@ -177,21 +177,114 @@ class CrazyflieController:
         
         return self.get_state()
 
-# Your implementation of the MPC class start here!! 
 class MPC:
     """ MPC for the drone"""
-    def __init__(self):
-    
+    def __init__(self,target_height):
+        print("init")
+        self.N = 20 
+        self.dt = 0.1
+        self.target_height = target_height
+        self.traj_time = 5.0
+        self.sim_steps = int(self.traj_time / self.dt)
+
+        self.create_reference_trajectory()
+        self.ocp = self.create_ocp()
+        self.solver = AcadosOcpSolver(self.ocp)
+        self.simX1 = np.zeros((self.sim_steps + 1, 13))
+
+    def create_reference_trajectory(self):
+        """Create a reference trajectory for the drone to follow"""
+        
+        params = {
+            't': [0, self.traj_time],
+            'q': [[0.0, 0.0, 0.0], [0.0, 0.0, self.target_height]],
+            'v': [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            'a': [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            'dt': self.dt
+        }
+        
+        traj = self.make_trajectory('quintic', params)
+        
+        
+        n_points = len(traj['t'])
+        self.trajectory1 = np.zeros((n_points, 13))
+        
+        # Position and velocity
+        self.trajectory1[:, 0:3] = traj['q']  # x, y, z
+        self.trajectory1[:, 3:6] = traj['v']  # vx, vy, vz
+        
+        # Quaternion 
+        self.trajectory1[:, 6] = 1.0  # qw
+        self.trajectory1[:, 7:10] = 0.0  # qx, qy, qz
+        
+        # Angular velocity 
+        self.trajectory1[:, 10:13] = 0.0 
+        
+
+
     def solve(self, step, current_state):
+        """
+        Solve MPC at current step
+        
+        Args:
+            step: Current simulation step
+            current_state: Current state vector [pos(3), vel(3), quat(4), omega(3)]
+            
+        Returns:
+            dict: Control commands with keys 'thrust', 'moment_x', 'moment_y', 'moment_z'
+        """
+
 
         return {
-            'thrust': ,
-            'moment_x': ,
-            'moment_y': , 
-            'moment_z': 
+            'thrust': 10,
+            'moment_x': 0,
+            'moment_y': 0, 
+            'moment_z': 0
         }
     
     def create_ocp(self):         
+        ocp = AcadosOcp()
+        model = quadrotor_model_auto()
+        ocp.model = model
+        nx = model.x.rows()
+        nu = model.u.rows()
+        ny = nx+nu
+        Tf = 2.0
+        N = 20
+        ocp.dims.N = N
+        ocp.solver_options.tf = Tf
+
+        
+        Q = np.diag([100,100,100,
+                     10,10,10,
+                     50,50,50,50,
+                     1,1,1])
+        R = np.diag([0.1, 0.1, 0.1, 0.1])  
+
+        # Weight Matrix
+        W = np.block([
+            [Q, np.zeros((13,4))],
+            [np.zeros((4,13)), R]
+        ])
+        ocp.cost.cost_type = "LINEAR_LS"
+        ocp.cost.W = W
+
+        Vx = np.eye(nx)
+        ocp.cost.Vx = Vx
+
+        Vu = np.zeros((ny,nu))
+        ocp.cost.Vu = Vu
+
+        ocp.cost.cost_type_e = "LINEAR_LS"
+        ocp.cost.W_e = Q
+        ocp.cost.Vx_e = np.eye(nx)
+    
+
+        ocp.solver_options.qp_solver = "FULL_CONDENSING_HPIPM"
+        ocp.solver_options.hessian_approx = "GAUSS_NEWTON"
+        ocp.solver_options.integrator_type = "ERK"
+        ocp.solver_options.nlp_solver_type = "SQP"
+        ocp.solver_options.qp_tol = 1e-6
 
         return ocp
 
