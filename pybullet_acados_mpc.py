@@ -229,12 +229,42 @@ class MPC:
             dict: Control commands with keys 'thrust', 'moment_x', 'moment_y', 'moment_z'
         """
 
-
+        # Set initial condition (constraint at step 0)
+        self.solver.set(0, "lbx", current_state)
+        self.solver.set(0, "ubx", current_state)
+        
+        # Update reference trajectory for horizon
+        for i in range(self.N):
+            ref_idx = min(step + i, self.sim_steps - 1)
+            ref_state = self.trajectory1[ref_idx]
+            
+            # Reference for intermediate stages (state + control)
+            yref = np.zeros(17)  # 13 states + 4 controls
+            yref[:13] = ref_state
+            yref[13:] = np.array([self.mass * self.g, 0, 0, 0])  # hover thrust, zero moments
+            self.solver.set(i, "yref", yref)
+        
+        # Terminal reference (only state, no control)
+        ref_idx = min(step + self.N, self.sim_steps - 1)
+        self.solver.set(self.N, "yref", self.trajectory1[ref_idx])
+        
+        # Solve OCP
+        status = self.solver.solve()
+        
+        if status != 0:
+            print(f"Warning: Solver returned status {status} at step {step}")
+        
+        # Get optimal control
+        u_opt = self.solver.get(0, "u")
+        
+        # Store results
+        self.simX1[step, :] = current_state
+        
         return {
-            'thrust': 0.73575*2,
-            'moment_x': 0,
-            'moment_y': 0, 
-            'moment_z': 0
+            'thrust': float(u_opt[0]),
+            'moment_x': float(u_opt[1]),
+            'moment_y': float(u_opt[2]),
+            'moment_z': float(u_opt[3])
         }
     
     def create_ocp(self):         
@@ -417,11 +447,11 @@ if __name__ == "__main__":
         line1.set_data(mpc.simX1[:t+1, 0], mpc.simX1[:t+1, 1])
         line1.set_3d_properties(mpc.simX1[:t+1, 2])
         plt.draw()
-        plt.pause(0.2)  # adjust speed
+        plt.pause(0.01)  # adjust speed
 
     ax.legend()
     ax.grid(True)
-    print(mpc.simX1)
     plt.show()
     
     p.disconnect()
+    print(mpc.simX1[:,0:3])

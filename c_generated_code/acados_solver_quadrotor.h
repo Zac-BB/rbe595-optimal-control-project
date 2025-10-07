@@ -42,8 +42,8 @@
 #define QUADROTOR_NP     0
 #define QUADROTOR_NP_GLOBAL     0
 #define QUADROTOR_NBX    0
-#define QUADROTOR_NBX0   0
-#define QUADROTOR_NBU    0
+#define QUADROTOR_NBX0   13
+#define QUADROTOR_NBU    4
 #define QUADROTOR_NSBX   0
 #define QUADROTOR_NSBU   0
 #define QUADROTOR_NSH    0

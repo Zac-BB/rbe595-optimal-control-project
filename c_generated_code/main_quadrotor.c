@@ -71,6 +71,38 @@ int main()
     ocp_nlp_out *nlp_out = quadrotor_acados_get_nlp_out(acados_ocp_capsule);
     ocp_nlp_solver *nlp_solver = quadrotor_acados_get_nlp_solver(acados_ocp_capsule);
     void *nlp_opts = quadrotor_acados_get_nlp_opts(acados_ocp_capsule);
+    // initial condition
+    double lbx0[NBX0];
+    double ubx0[NBX0];
+    lbx0[0] = 0;
+    ubx0[0] = 0;
+    lbx0[1] = 0;
+    ubx0[1] = 0;
+    lbx0[2] = 0;
+    ubx0[2] = 0;
+    lbx0[3] = 0;
+    ubx0[3] = 0;
+    lbx0[4] = 0;
+    ubx0[4] = 0;
+    lbx0[5] = 0;
+    ubx0[5] = 0;
+    lbx0[6] = 0;
+    ubx0[6] = 0;
+    lbx0[7] = 0;
+    ubx0[7] = 0;
+    lbx0[8] = 0;
+    ubx0[8] = 0;
+    lbx0[9] = 0;
+    ubx0[9] = 0;
+    lbx0[10] = 0;
+    ubx0[10] = 0;
+    lbx0[11] = 0;
+    ubx0[11] = 0;
+    lbx0[12] = 0;
+    ubx0[12] = 0;
+
+    ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, 0, "lbx", lbx0);
+    ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, 0, "ubx", ubx0);
 
     // initialization for state values
     double x_init[NX];
