@@ -179,7 +179,7 @@ class MPC:
         self.N = 20 
         self.dt = 0.1
         self.target_height = target_height
-        self.traj_time = 5.0
+        self.traj_time = 15.0
         self.sim_steps = int(self.traj_time / self.dt)
 
         self.create_reference_trajectory()
@@ -230,41 +230,41 @@ class MPC:
         """
 
         # Set initial condition (constraint at step 0)
-        self.solver.set(0, "lbx", current_state)
-        self.solver.set(0, "ubx", current_state)
+        # self.solver.set(0, "lbx", current_state)
+        # self.solver.set(0, "ubx", current_state)
         
-        # Update reference trajectory for horizon
-        for i in range(self.N):
-            ref_idx = min(step + i, self.sim_steps - 1)
-            ref_state = self.trajectory1[ref_idx]
+        # # Update reference trajectory for horizon
+        # for i in range(self.N):
+        #     ref_idx = min(step + i, self.sim_steps - 1)
+        #     ref_state = self.trajectory1[ref_idx]
             
-            # Reference for intermediate stages (state + control)
-            yref = np.zeros(17)  # 13 states + 4 controls
-            yref[:13] = ref_state
-            yref[13:] = np.array([self.mass * self.g, 0, 0, 0])  # hover thrust, zero moments
-            self.solver.set(i, "yref", yref)
+        #     # Reference for intermediate stages (state + control)
+        #     yref = np.zeros(17)  # 13 states + 4 controls
+        #     yref[:13] = ref_state
+        #     yref[13:] = np.array([self.mass * self.g, 0, 0, 0])  # hover thrust, zero moments
+        #     self.solver.set(i, "yref", yref)
         
-        # Terminal reference (only state, no control)
-        ref_idx = min(step + self.N, self.sim_steps - 1)
-        self.solver.set(self.N, "yref", self.trajectory1[ref_idx])
+        # # Terminal reference (only state, no control)
+        # ref_idx = min(step + self.N, self.sim_steps - 1)
+        # self.solver.set(self.N, "yref", self.trajectory1[ref_idx])
         
-        # Solve OCP
-        status = self.solver.solve()
+        # # Solve OCP
+        # status = self.solver.solve()
         
-        if status != 0:
-            print(f"Warning: Solver returned status {status} at step {step}")
+        # if status != 0:
+        #     print(f"Warning: Solver returned status {status} at step {step}")
         
-        # Get optimal control
-        u_opt = self.solver.get(0, "u")
+        # # Get optimal control
+        # u_opt = self.solver.get(0, "u")
         
-        # Store results
-        self.simX1[step, :] = current_state
+        # # Store results
+        # self.simX1[step, :] = current_state
         
         return {
-            'thrust': float(u_opt[0]),
-            'moment_x': float(u_opt[1]),
-            'moment_y': float(u_opt[2]),
-            'moment_z': float(u_opt[3])
+            'thrust': 1,
+            'moment_x': 0,
+            'moment_y': 0,
+            'moment_z': 0
         }
     
     def create_ocp(self):         
@@ -291,25 +291,7 @@ class MPC:
             [Q, np.zeros((13,4))],
             [np.zeros((4,13)), R]
         ])
-        ocp.cost.cost_type = "LINEAR_LS"
-        ocp.cost.W = W
-        ocp.cost.yref = np.zeros(ny)
-        ocp.cost.Vx = np.vstack([np.eye(nx), np.zeros((nu, nx))])
-        ocp.cost.Vu = np.vstack([np.zeros((nx, nu)), np.eye(nu)])
-
-        ocp.cost.cost_type_e = "LINEAR_LS"
-        ocp.cost.W_e = Q
-        ocp.cost.Vx_e = np.eye(nx)
-        ocp.cost.yref_e = np.zeros(nx)
-        # ocp.constraints.lbu = np.array([0, -moment_max, -moment_max, -moment_max])
-        # ocp.constraints.ubu = np.array([thrust_max, moment_max, moment_max, moment_max])
-        # ocp.constraints.idxbu = np.array([0, 1, 2, 3])
-
-        ocp.solver_options.qp_solver = "FULL_CONDENSING_HPIPM"
-        ocp.solver_options.hessian_approx = "GAUSS_NEWTON"
-        ocp.solver_options.integrator_type = "ERK"
-        ocp.solver_options.nlp_solver_type = "SQP"
-        ocp.solver_options.qp_tol = 1e-6
+        
 
         return ocp
 
@@ -409,13 +391,13 @@ if __name__ == "__main__":
         new_state = cf_controller.step_simulation(mpc_output, mpc.trajectory1[step+1])
         
         # Print state every 100 steps
-        if step % 100 == 0:
-            print(f"Step {step}: Height = {new_state['position'][2]:.3f}m")
+        # if step % 100 == 0:
+        print(f"Step {step}: Height = {new_state['position'][2]:.3f}m")
     
-    current_state = cf_controller.get_state()
-    current_state = np.concatenate([current_state['position'].ravel(), current_state['orientation'].ravel(), current_state['velocity'].ravel(), current_state['angular_velocity'].ravel()])
+        current_state = cf_controller.get_state()
+        current_state = np.concatenate([current_state['position'].ravel(), current_state['orientation'].ravel(), current_state['velocity'].ravel(), current_state['angular_velocity'].ravel()])
 
-    mpc.simX1[step,:] = current_state
+        mpc.simX1[step,:] = current_state
     
     # Plotting obstacles and drone trajectories on a 3D plot
     traj_plot1 = mpc.trajectory1[:mpc.sim_steps+1, :3]
@@ -435,6 +417,8 @@ if __name__ == "__main__":
     ax.set_ylabel('Y [m]')
     ax.set_zlabel('Z [m]')
     ax.set_title('3D Quadrotor Trajectory')
+
+    ax.set_zlim(-3, 0.5)
 
     # Plot the reference trajectory
     ax.plot(traj_plot1[:, 0], traj_plot1[:, 1], traj_plot1[:, 2], '--', label='Reference Trajectory for 1', color='r')
