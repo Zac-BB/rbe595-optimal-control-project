@@ -52,7 +52,7 @@ class Test_Dynamics(unittest.TestCase):
             change = xi[5] - xim1[5]
             dx = change / dt
             
-            baseline = -9.81 + 1/0.03
+            baseline = -9.81 + 1/0.027
             # result = func(x0,u_const)
             self.assertTrue(abs(dx - baseline) < 1e-5)
             
@@ -80,7 +80,7 @@ class Test_Dynamics(unittest.TestCase):
             axs[2].plot(time, x_traj[:, 7], label='qx')
             axs[2].plot(time, x_traj[:, 8], label='qy')
             axs[2].plot(time, x_traj[:, 9], label='qy')
-            axs[2].set_ylabel('Position')
+            axs[2].set_ylabel('Attitude')
             axs[2].grid(True)
             axs[2].legend()
 
@@ -168,7 +168,7 @@ class Test_Dynamics(unittest.TestCase):
             axs[2].plot(time, x_traj[:, 7], label='qx')
             axs[2].plot(time, x_traj[:, 8], label='qy')
             axs[2].plot(time, x_traj[:, 9], label='qy')
-            axs[2].set_ylabel('Position')
+            axs[2].set_ylabel('Attitude')
             axs[2].grid(True)
             axs[2].legend()
 
@@ -225,7 +225,7 @@ class Test_Dynamics(unittest.TestCase):
             change = xi[10] - xim1[10]
             dx = change / dt
             
-            baseline = 1/1.43
+            baseline = 1/1.4
             # result = func(x0,u_const)
             self.assertTrue(abs(dx - baseline) < 1e-5)
         if (self.show_plots):
@@ -251,7 +251,7 @@ class Test_Dynamics(unittest.TestCase):
             axs[2].plot(time, x_traj[:, 7], label='qx')
             axs[2].plot(time, x_traj[:, 8], label='qy')
             axs[2].plot(time, x_traj[:, 9], label='qy')
-            axs[2].set_ylabel('Position')
+            axs[2].set_ylabel('Attitude')
             axs[2].grid(True)
             axs[2].legend()
 
@@ -308,7 +308,7 @@ class Test_Dynamics(unittest.TestCase):
             change = xi[11] - xim1[11]
             dx = change / dt
             
-            baseline = 1/1.43
+            baseline = 1/1.4
             # result = func(x0,u_const)
             self.assertTrue(abs(dx - baseline) < 1e-5)
         if (self.show_plots):
@@ -391,7 +391,7 @@ class Test_Dynamics(unittest.TestCase):
             change = xi[12] - xim1[12]
             dx = change / dt
             
-            baseline = 1/2.89
+            baseline = 1/2.17
             # result = func(x0,u_const)
             self.assertTrue(abs(dx - baseline) < 1e-5)
         if (self.show_plots):

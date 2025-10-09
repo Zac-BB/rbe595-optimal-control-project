@@ -178,18 +178,19 @@ class MPC:
         print("init")
         self.N = 20 
         self.dt = 0.1
+        self.traj_time = 10.0
+
+        self.mass = 0.027 # 0.027  # kg
+        self.arm_length = 0.0397  # m
+        self.kf = 3.16e-10  # thrust coefficient
+        self.km = 7.94e-12  # moment coefficient
+        self.max_rpm = 21000  # typical max RPM for CF2.0
+        omega_max = self.max_rpm * 2*np.pi / 60.0  # rad/s
+        self.max_thrust_per_motor = self.kf * (omega_max ** 2)
+
         self.target_height = target_height
-        self.traj_time = 15.0
         self.sim_steps = int(self.traj_time / self.dt)
 
-        self.create_reference_trajectory()
-        self.ocp = self.create_ocp()
-        self.solver = AcadosOcpSolver(self.ocp)
-        self.simX1 = np.zeros((self.sim_steps + 1, 13))
-
-    def create_reference_trajectory(self):
-        """Create a reference trajectory for the drone to follow"""
-        
         params = {
             't': [0, self.traj_time],
             'q': [[0.0, 0.0, 0.0], [0.0, 0.0, self.target_height]],
@@ -199,22 +200,22 @@ class MPC:
         }
         
         traj = self.make_trajectory('quintic', params)
-        
-        
+        self.t = traj['t']
         n_points = len(traj['t'])
         self.trajectory1 = np.zeros((n_points, 13))
-        
-        # Position and velocity
+
         self.trajectory1[:, 0:3] = traj['q']  # x, y, z
         self.trajectory1[:, 3:6] = traj['v']  # vx, vy, vz
         
-        # Quaternion 
         self.trajectory1[:, 6] = 1.0  # qw
         self.trajectory1[:, 7:10] = 0.0  # qx, qy, qz
         
-        # Angular velocity 
-        self.trajectory1[:, 10:13] = 0.0 
-        
+        self.trajectory1[:, 10:13] = 0.0 # wx, wy, wz
+
+
+        self.ocp = self.create_ocp()
+        self.solver = AcadosOcpSolver(self.ocp)
+        self.simX1 = np.zeros((self.sim_steps, 13))
 
 
     def solve(self, step, current_state):
@@ -274,24 +275,49 @@ class MPC:
         nx = model.x.rows()
         nu = model.u.rows()
         ny = nx+nu
-        Tf = 2.0
-        N = 20
-        ocp.dims.N = N
-        ocp.solver_options.tf = Tf
+    
+        ocp.dims.N = self.N
+        ocp.solver_options.tf = self.traj_time
 
+        Qr = np.diag([1,1,1])
+        Qv = np.diag([0.1,0.1,0.1])
+        Qa = np.diag([0.5,0.5,0.5,0.5])
+        Qw = np.diag([0.1,0.1,0.1])
         
-        Q = np.diag([100,100,100,
-                     10,10,10,
-                     50,50,50,50,
-                     1,1,1])
-        R = np.diag([0.1, 0.1, 0.1, 0.1])  
+        R = np.diag([0.01, 0.01, 0.01, 0.01])  
 
-        # Weight Matrix
+        ocp.cost.cost_type = "LINEAR_LS"
+
+
         W = np.block([
-            [Q, np.zeros((13,4))],
-            [np.zeros((4,13)), R]
+            [Qr, np.zeros((3,14))],
+            [np.zeros((3,3)), Qv,np.zeros((3,11))],
+            [np.zeros((4,6)), Qa,np.zeros((4,7))],
+            [np.zeros((3,10)), Qw,np.zeros((3,4))],
+            [np.zeros((4,13)),R],
         ])
+
+        ocp.cost.Vx = np.vstack([np.eye(13),np.zeros((4,13))])
+        ocp.cost.Vu = np.vstack([np.eye(4),np.zeros((13,4))])
+        ocp.cost.W = W
+        #ocp.cost.yref = ??
+
+
+        ocp.cost.cost_type_e = "LINEAR_LS"
+        ocp.cost.Vx_e = np.diag([1,1,1,0,0,0,1,1,1,1,0,0,0])
+        ocp.cost.W_e = np.block([[Qr,np.zeros(3,4)],[np.zeros(4,3),Qa]])
+        #ocp.cost.yref_e = ??
+
         
+        max_thrust = 4.0 * self.max_thrust_per_motor
+        max_torque_x_y = 2.0 * self.max_thrust_per_motor * self.arm_length
+        gamma = self.km/self.kf
+        max_torque_z = 4.0 * self.max_thrust_per_motor * gamma
+
+        ocp.constraints.lbu = np.array([-max_thrust, -max_torque_x_y, -max_torque_x_y, -max_torque_z])
+        ocp.constraints.ubu = np.array([max_thrust, max_torque_x_y, max_torque_x_y, max_torque_z])
+        ocp.constraints.idxbu = np.array([0,1,2,3], dtype=int)   
+        ocp.solver_options.integrator_type = "IRK"
 
         return ocp
 
@@ -373,17 +399,61 @@ class MPC:
 
         return {'t': times, 'q': q_traj, 'v': v_traj, 'a': a_traj}
 
+
+    def plot_traj(self,time,x_traj):
+        fig, axs = plt.subplots(2, 2, figsize=(10, 12), sharex=True)
+        fig.suptitle('State vs Time')
+        
+        time = time[0:-1]
+        axs[0][0].plot(time, x_traj[:, 0], label='x')
+        axs[0][0].plot(time, x_traj[:, 1], label='y')
+        axs[0][0].plot(time, x_traj[:, 2], label='z')
+        axs[0][0].set_ylabel('Position')
+        axs[0][0].grid(True)
+        axs[0][0].legend()
+
+
+        axs[0][1].plot(time, x_traj[:, 3], label='vx')
+        axs[0][1].plot(time, x_traj[:, 4], label='vy')
+        axs[0][1].plot(time, x_traj[:, 5] , label='vz')
+        axs[0][1].set_ylabel('Velocity')
+        axs[0][1].grid(True)
+        axs[0][1].legend()
+
+        axs[1][0].plot(time, x_traj[:, 6], label='qw')
+        axs[1][0].plot(time, x_traj[:, 7], label='qx')
+        axs[1][0].plot(time, x_traj[:, 8], label='qy')
+        axs[1][0].plot(time, x_traj[:, 9], label='qy')
+        axs[1][0].set_ylabel('Attitude')
+        axs[1][0].grid(True)
+        axs[1][0].legend()
+
+
+        axs[1][1].plot(time, x_traj[:, 10], label='wx')
+        axs[1][1].plot(time, x_traj[:,11], label='wy')
+        axs[1][1].plot(time, x_traj[:,12], label='wz')
+        axs[1][1].set_ylabel('Ang. Velocity')
+        axs[1][1].set_xlabel('Time [s]')
+        axs[1][1].grid(True)
+        axs[1][1].legend()
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.show()
+
+    def plot_states_v_time(self):
+        self.plot_traj(self.t,self.simX1)
+
 # Main simulation loop
 if __name__ == "__main__":
     # Initialize controller and MPC
     cf_controller = CrazyflieController()
     mpc = MPC(target_height=0.5)
-    
+    height = []
     # Simulation loop
     for step in range(mpc.sim_steps):
         # Get current state
         current_state = cf_controller.get_state()
         current_state = np.concatenate([current_state['position'].ravel(), current_state['velocity'].ravel(), current_state['orientation'].ravel(), current_state['angular_velocity'].ravel()])
+        mpc.simX1[step,:] = current_state
         
         mpc_output = mpc.solve(step, current_state)
 
@@ -393,11 +463,11 @@ if __name__ == "__main__":
         # Print state every 100 steps
         # if step % 100 == 0:
         print(f"Step {step}: Height = {new_state['position'][2]:.3f}m")
-    
-        current_state = cf_controller.get_state()
-        current_state = np.concatenate([current_state['position'].ravel(), current_state['orientation'].ravel(), current_state['velocity'].ravel(), current_state['angular_velocity'].ravel()])
+        height.append(new_state['position'][2])
+    current_state = cf_controller.get_state()
+    current_state = np.concatenate([current_state['position'].ravel(), current_state['velocity'].ravel(), current_state['orientation'].ravel(), current_state['angular_velocity'].ravel()])
 
-        mpc.simX1[step,:] = current_state
+    mpc.simX1[step,:] = current_state
     
     # Plotting obstacles and drone trajectories on a 3D plot
     traj_plot1 = mpc.trajectory1[:mpc.sim_steps+1, :3]
@@ -439,3 +509,6 @@ if __name__ == "__main__":
     
     p.disconnect()
     print(mpc.simX1[:,0:3])
+    np.savetxt('height.csv', height, delimiter=',')
+
+    mpc.plot_states_v_time()

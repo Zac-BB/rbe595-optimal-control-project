@@ -21,11 +21,11 @@ def quadrotor_model_auto() -> AcadosModel:
     model_name = 'quadrotor'
     
     g = 9.81
-    Ixx = 1.43
-    Iyy = 1.43
-    Izz = 2.89
+    Ixx = 1.4
+    Iyy = 1.4
+    Izz = 2.17
     l = 0.046
-    m = 0.03
+    m = 0.027
     mu = 0.73575
 
 
@@ -43,7 +43,7 @@ def quadrotor_model_auto() -> AcadosModel:
     q = SX.sym("q")
     r = SX.sym("r")
     X = vertcat(x,y,z,vx,vy,vz,qw,qx,qy,qz,p,q,r)
-
+    X_dot = SX.sym('xdot', 13)
     T = SX.sym('u_1')
     tau_x = SX.sym('tau_x')
     tau_y = SX.sym('tau_y')
@@ -55,7 +55,7 @@ def quadrotor_model_auto() -> AcadosModel:
         horzcat(2*(qx*qz-qw*qy), 2*(qy*qz+qw*qx), 1-2*(qx**2+qy**2))
     )
     
-    # Quaternion kinematics matrix (Omega)
+    
     Omega = vertcat(
         horzcat(0, -p, -q, -r),
         horzcat(p, 0, r, -q),
@@ -73,6 +73,7 @@ def quadrotor_model_auto() -> AcadosModel:
     model = AcadosModel()
 
     model.f_expl_expr = f_expl
+    model.f_impl_expr = X_dot - f_expl
     model.x = X
     model.u = u
     model.p = []
