@@ -179,7 +179,7 @@ class MPC:
         print("init")
 
 
-        self.Qr = np.diag([1000,1000,1000])
+        self.Qr = np.diag([1500,1500,1500])
         self.Qv = np.diag([100,100,100])
         self.Qq = np.diag([100,100,100,100])
         self.Qw = np.diag([100,100,100])
@@ -203,19 +203,44 @@ class MPC:
 
         self.target_height = target_height
         self.sim_steps = int(self.traj_time / self.dt)
+        if target_height:
+            params  = {
+                't'  : [0, 1],
+                'q'  : [[0, 0, 0], [0,0,target_height]],
+                'v'  : [[0, 0, 0], [0, 0, 0]],
+                'a'  : [[0, 0, 0], [0, 0, 0]],
+                'dt' : self.dt
+            } 
+            takeoff = self.make_trajectory('quintic', params)
+            circle = lambda t: np.array([np.cos(t)-1,np.sin(t),target_height,-np.sin(t),np.cos(t),0])
+            params  = {
+                't'  : [0, 10],
+                'q'  : [[0], [2*3.141529]],
+                'v'  : [[0], [0]],
+                'a'  : [[0], [0]],
+                'dt' : self.dt
+            } 
+            quintic_space  = self.make_trajectory('quintic', params)
+            circle_traj = np.vstack([circle(t) for t in quintic_space['q'].ravel()])
+            pos_traj = np.vstack([np.hstack([takeoff['q'], takeoff['v']]), circle_traj])
 
-        params  = {
-            't'  : [0, 10],
-            'q'  : [[0, 0, 0], [1, 1, 1]],
-            'v'  : [[0, 0, 0], [0, 0, 0]],
-            'a'  : [[0, 0, 0], [0, 0, 0]],
-            'dt' : self.dt
-        } 
-        r_traj = self.make_trajectory('quintic', params)
-        
-        self.sim_steps = r_traj['t'].shape[0]-1
-        attitude = np.hstack((np.ones((self.sim_steps+1,1)),np.zeros((self.sim_steps+1,6)) ))
-        self.trajectory1 = np.concat([r_traj['q'], r_traj['v'], attitude], axis=1)
+            self.sim_steps = pos_traj.shape[0]-1
+            attitude = np.hstack((np.ones((self.sim_steps+1,1)),np.zeros((self.sim_steps+1,6)) ))
+            self.trajectory1 = np.concat([pos_traj, attitude], axis=1)
+        else:
+
+            params  = {
+                't'  : [0, 10],
+                'q'  : [[0, 0, 0], [1, 1, 1]],
+                'v'  : [[0, 0, 0], [0, 0, 0]],
+                'a'  : [[0, 0, 0], [0, 0, 0]],
+                'dt' : self.dt
+            } 
+            pos_traj = self.make_trajectory('quintic', params)
+            
+            self.sim_steps = pos_traj['t'].shape[0]-1
+            attitude = np.hstack((np.ones((self.sim_steps+1,1)),np.zeros((self.sim_steps+1,6)) ))
+            self.trajectory1 = np.concat([pos_traj['q'], pos_traj['v'], attitude], axis=1)
         
         self.simX1 = np.zeros((self.sim_steps,13))
         self.ocp = self.create_ocp()
@@ -411,9 +436,9 @@ class MPC:
         axs[0][0].plot(time, x_traj[:, 0], label='x')
         axs[0][0].plot(time, x_traj[:, 1], label='y')
         axs[0][0].plot(time, x_traj[:, 2], label='z')
-        axs[0][0].plot(time, self.trajectory1[1:,0],label='x_ref')
-        axs[0][0].plot(time, self.trajectory1[1:,1],label='y_ref')
-        axs[0][0].plot(time, self.trajectory1[1:,2],label='z_ref')
+        # axs[0][0].plot(time, self.trajectory1[1:,0],label='x_ref')
+        # axs[0][0].plot(time, self.trajectory1[1:,1],label='y_ref')
+        # axs[0][0].plot(time, self.trajectory1[1:,2],label='z_ref')
         axs[0][0].set_ylabel('Position')
         axs[0][0].grid(True)
         axs[0][0].legend()
