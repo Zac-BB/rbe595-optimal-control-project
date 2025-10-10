@@ -178,7 +178,7 @@ class MPC:
         print("init")
         self.N = 20 
         self.dt = 0.1
-        self.traj_time = 10.0
+        self.traj_time = 2.0
 
         self.mass = 0.027 # 0.027  # kg
         self.arm_length = 0.0397  # m
@@ -214,8 +214,10 @@ class MPC:
 
 
         self.ocp = self.create_ocp()
-        self.solver = AcadosOcpSolver(self.ocp)
+        # self.solver = AcadosOcpSolver(self.ocp)
+        self.ocp_solver = AcadosOcpSolver(self.ocp, json_file=f'{self.ocp.model.name}_ocp.json', verbose=False)
         self.simX1 = np.zeros((self.sim_steps, 13))
+        self.simU = np.zeros((self.sim_steps, 4))
 
 
     def solve(self, step, current_state):
@@ -230,226 +232,70 @@ class MPC:
             dict: Control commands with keys 'thrust', 'moment_x', 'moment_y', 'moment_z'
         """
 
-        nx = 13
-        nu = 4
 
-        # Set initial condition
-        self.solver.set(0, "lbx", current_state)
-        self.solver.set(0, "ubx", current_state)
+        # self.ocp_solver.set(0, "x", current_state)
+        self.ocp_solver.set(0, "lbx", current_state)
+        self.ocp_solver.set(0, "ubx", current_state)
 
-        # Set trajectory references
+
+        # r_ref = np.array([0,0,self.target_height]).reshape(3,1)
+        # v_ref = np.array([0,0,0]).reshape(3,1)
+        # psi_ref = np.array([1,0,0,0]).reshape(4,1)
+        # psi_dot_ref = np.array([0,0,0]).reshape(3,1) #forced 
+        # 
+        # for i in range(self.N):
+        #     yref = np.vstack([r_ref,v_ref,psi_ref,psi_dot_ref,u0])
+        #     self.ocp_solver.set(i, "yref", yref)
+
+
         for i in range(self.N):
-            ref_idx = min(step + i, len(self.trajectory1) - 1)
-            ref_state = self.trajectory1[ref_idx]
-            yref = np.zeros(nx + nu)
-            yref[:nx] = ref_state
-            yref[nx:] = np.zeros(nu)
-            self.solver.set(i, "yref", yref)
+            traj_idx = min(step + i, len(self.trajectory1) - 1)
+            r_ref = self.trajectory1[traj_idx, 0:3].reshape(3,1)
+            v_ref = self.trajectory1[traj_idx, 3:6].reshape(3,1)
+            psi_ref = np.array([1,0,0,0]).reshape(4,1)
+            psi_dot_ref = np.array([0,0,0]).reshape(3,1)
+            u_0 = np.array([self.mass * 9.81, 0, 0, 0]).reshape(4,1)  
+            yref = np.vstack([r_ref, v_ref, psi_ref, psi_dot_ref, u_0])
+            self.ocp_solver.set(i, "yref", yref)
 
-        # Terminal reference
-        ref_idx = min(step + self.N, len(self.trajectory1) - 1)
-        yref_e = self.trajectory1[ref_idx]
-        self.solver.set(self.N, "yref", yref_e)
+        yref_e = np.vstack([r_ref,psi_ref])
+        self.ocp_solver.set(self.N, "yref", yref_e)
+        # self.ocp_solver.set(self.N, "yref_e", yref_e)
 
-        # Solve
-        status = self.solver.solve()
+
+
+
+        # self.ocp.cost.yref = np.vstack([r_ref,v_ref,psi_ref,psi_dot_ref,u0])
+        # self.ocp.cost.yref_e = np.vstack([r_ref,psi_ref])
+        # self.ocp.constraints.x0 = current_state
+
+
+
+
+
+
+        status = self.ocp_solver.solve()
+
         if status != 0:
-            print("Solver failed with status:", status)
+            print(f"[MPC] Solver failed with status: {status}")
 
-        # Extract first control
-        u_opt = self.solver.get(0, "u")
-
-        globalization = setting['globalization']
-        globalization_line_search_use_sufficient_descent = setting['globalization_line_search_use_sufficient_descent']
-        globalization_use_SOC = setting['globalization_use_SOC']
-        qp_solver = setting['qp_solver']
-
-        # create ocp object to formulate the OCP
-        ocp = AcadosOcp()
-
-        # set model
-        model = export_linear_mass_model()
-        ocp.model = model
-
-        nx = model.x.rows()
-        nu = model.u.rows()
-        ny = nu
-
-        # discretization
-        Tf = 2
-        N = 20
-        shooting_nodes = np.linspace(0, Tf, N+1)
-        ocp.solver_options.N_horizon = N
-
-        # set cost
-        Q = 2*np.diag([])
-        R = 2*np.diag([1e1, 1e1])
-
-        ocp.cost.W_e = Q
-        ocp.cost.W = scipy.linalg.block_diag(Q, R)
-
-        ocp.cost.cost_type = 'LINEAR_LS'
-        ocp.cost.cost_type_e = 'LINEAR_LS'
-
-        ocp.cost.Vx = np.zeros((ny, nx))
-
-        Vu = np.eye((nu))
-        ocp.cost.Vu = Vu
-        ocp.cost.yref = np.zeros((ny, ))
-
-        # set constraints
-        Fmax = 5
-        ocp.constraints.lbu = -Fmax * np.ones((nu,))
-        ocp.constraints.ubu = +Fmax * np.ones((nu,))
-        ocp.constraints.idxbu = np.array(range(nu))
-        x0 = np.array([1e-1, 1.1, 0, 0])
-        ocp.constraints.x0 = x0
-
-        # terminal constraint
-        x_goal = np.array([0, -1.1, 0, 0])
-        ocp.constraints.idxbx_e = np.array(range(nx))
-        ocp.constraints.lbx_e = x_goal
-        ocp.constraints.ubx_e = x_goal
-
-        if SOFTEN_TERMINAL:
-            ocp.constraints.idxsbx_e = np.array(range(nx))
-            ocp.cost.zl_e = 1e4 * np.ones(nx)
-            ocp.cost.zu_e = 1e4 * np.ones(nx)
-            ocp.cost.Zl_e = 1e6 * np.ones(nx)
-            ocp.cost.Zu_e = 1e6 * np.ones(nx)
-
-        # add obstacle
-        if OBSTACLE:
-            obs_rad = 1.0; obs_x = 0.0; obs_y = 0.0
-            circle = (obs_x, obs_y, obs_rad)
-            ocp.constraints.uh = np.array([100.0]) # doenst matter
-            ocp.constraints.lh = np.array([obs_rad**2])
-            x_square = model.x[0] ** OBSTACLE_POWER + model.x[1] ** OBSTACLE_POWER
-            ocp.model.con_h_expr = x_square
-            # copy for terminal
-            ocp.constraints.uh_e = ocp.constraints.uh
-            ocp.constraints.lh_e = ocp.constraints.lh
-            ocp.model.con_h_expr_e = ocp.model.con_h_expr
-        else:
-            circle = None
-
-        # soften
-        if OBSTACLE and SOFTEN_OBSTACLE:
-            ocp.constraints.idxsh = np.array([0])
-            ocp.constraints.idxsh_e = np.array([0])
-            Zh = 1e6 * np.ones(1)
-            zh = 1e4 * np.ones(1)
-            # initial: no obstacle constraint, no addtional slack
-            ocp.cost.zl_0 = ocp.cost.zl
-            ocp.cost.zu_0 = ocp.cost.zu
-            ocp.cost.Zl_0 = ocp.cost.Zl
-            ocp.cost.Zu_0 = ocp.cost.Zu
-            # path & terminal: slacked obstacle constraint
-            ocp.cost.zl = np.concatenate((ocp.cost.zl, zh))
-            ocp.cost.zu = np.concatenate((ocp.cost.zu, zh))
-            ocp.cost.Zl = np.concatenate((ocp.cost.Zl, Zh))
-            ocp.cost.Zu = np.concatenate((ocp.cost.Zu, Zh))
-            ocp.cost.zl_e = np.concatenate((ocp.cost.zl_e, zh))
-            ocp.cost.zu_e = np.concatenate((ocp.cost.zu_e, zh))
-            ocp.cost.Zl_e = np.concatenate((ocp.cost.Zl_e, Zh))
-            ocp.cost.Zu_e = np.concatenate((ocp.cost.Zu_e, Zh))
-
-        # set options
-        ocp.solver_options.qp_solver = qp_solver # FULL_CONDENSING_QPOASES
-        # PARTIAL_CONDENSING_HPIPM, FULL_CONDENSING_QPOASES, FULL_CONDENSING_HPIPM,
-        # PARTIAL_CONDENSING_QPDUNES, PARTIAL_CONDENSING_OSQP
-        ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
-        ocp.solver_options.integrator_type = 'ERK'
-        # ocp.solver_options.print_level = 1
-        ocp.solver_options.nlp_solver_type = 'SQP' # SQP_RTI, SQP
-        ocp.solver_options.globalization = globalization
-        if use_deprecated_options:
-            ocp.solver_options.alpha_min = 0.01
-            ocp.solver_options.globalization_use_SOC = setting['globalization_use_SOC']
-            ocp.solver_options.full_step_dual = 1
-            ocp.solver_options.eps_sufficient_descent = 1e-4
-            ocp.solver_options.line_search_use_sufficient_descent = setting['globalization_line_search_use_sufficient_descent']
-        else:
-            ocp.solver_options.globalization_alpha_min = 0.01
-        # ocp.solver_options.levenberg_marquardt = 1e-2
-        ocp.solver_options.qp_solver_cond_N = 0
-        ocp.solver_options.print_level = 1
-        ocp.solver_options.nlp_solver_max_iter = 200
-        ocp.solver_options.qp_solver_iter_max = 400
-        # NOTE: this is needed for PARTIAL_CONDENSING_HPIPM to get expected behavior
-        qp_tol = 5e-7
-        ocp.solver_options.qp_solver_tol_stat = qp_tol
-        ocp.solver_options.qp_solver_tol_eq = qp_tol
-        ocp.solver_options.qp_solver_tol_ineq = qp_tol
-        ocp.solver_options.qp_solver_tol_comp = qp_tol
-        ocp.solver_options.qp_solver_ric_alg = 1
-
-        # set prediction horizon
-        ocp.solver_options.tf = Tf
-
-        ocp_solver = AcadosOcpSolver(ocp, json_file=f'{model.name}_ocp.json', verbose=False)
-
-        if globalization == "FUNNEL_L1PEN_LINESEARCH":
-            # Test the options setters
-            ocp_solver.options_set('globalization_funnel_init_increase_factor', 15.0)
-            ocp_solver.options_set('globalization_funnel_init_upper_bound', 1.0)
-            ocp_solver.options_set('globalization_funnel_sufficient_decrease_factor', 0.9)
-            ocp_solver.options_set('globalization_funnel_kappa', 0.9)
-            ocp_solver.options_set('globalization_funnel_fraction_switching_condition', 1e-3)
-            ocp_solver.options_set('globalization_funnel_initial_penalty_parameter', 1.0)
-        if not use_deprecated_options:
-            ocp_solver.options_set('globalization_line_search_use_sufficient_descent', globalization_line_search_use_sufficient_descent)
-            ocp_solver.options_set('globalization_use_SOC', globalization_use_SOC)
-            ocp_solver.options_set('globalization_full_step_dual', 1)
-
-        if INITIALIZE:# initialize solver
-            # [ocp_solver.set(i, "x", x0 + (i/N) * (x_goal-x0)) for i in range(N+1)]
-            [ocp_solver.set(i, "x", x0) for i in range(N+1)]
-            # [ocp_solver.set(i, "u", 2*(np.random.rand(2) - 0.5)) for i in range(N)]
-
-        # solve
-        status = ocp_solver.solve()
-        ocp_solver.print_statistics() # encapsulates: stat = ocp_solver.get_stats("statistics")
-        sqp_iter = ocp_solver.get_stats('sqp_iter')
-        print(f'acados returned status {status}.')
-
-        # ocp_solver.store_iterate(f'it{ocp.solver_options.nlp_solver_max_iter}_{model.name}.json')
-
-        # get solution
-        simX = np.array([ocp_solver.get(i,"x") for i in range(N+1)])
-        simU = np.array([ocp_solver.get(i,"u") for i in range(N)])
-        pi_multiplier = [ocp_solver.get(i, "pi") for i in range(N)]
-
-        # print summary
-        print(f"solved Maratos test problem with settings {setting}")
-        print(f"cost function value = {ocp_solver.get_cost()} after {sqp_iter} SQP iterations")
-        # print(f"alphas: {alphas[:iter]}")
-        # print(f"total number of QP iterations: {sum(qp_iters[:iter])}")
-        # max_infeasibility = np.max(residuals[1:3])
-        # print(f"max infeasibility: {max_infeasibility}")
-
-        # checks
-        if status != 0:
-            raise Exception(f"acados solver returned status {status} != 0.")
-        if globalization == "FIXED_STEP":
-            if sqp_iter != 18:
-                raise Exception(f"acados solver took {sqp_iter} iterations, expected 18.")
-        elif globalization == "MERIT_BACKTRACKING" and not use_deprecated_options:
-            if sqp_iter not in range(15, 23):
-                raise Exception(f"acados solver took {sqp_iter} iterations, expected range(15, 23).")
-
-        if PLOT:
-            plot_linear_mass_system_X_state_space(simX, circle=circle, x_goal=x_goal)
-            plot_linear_mass_system_U(shooting_nodes, simU)
-        print(f"\n\n----------------------\n")
-
+        u = self.ocp_solver.get(0, "u")
         
+        # u  = self.ocp_solver.solve_for_x0(current_state)
+        # status = self.ocp_solver.get_status()
+        # # status = self.ocp_solver.solve()
+        # self.ocp_solver.print_statistics()
+        # # if(status):
+        # # u_opt = self.ocp_solver.get(0, "u")
+        print("U: {}".format(u))
         
+
+
         return {
-            'thrust': 1,
-            'moment_x': 0,
-            'moment_y': 0,
-            'moment_z': 0
+            'thrust':   u[0],
+            'moment_x': u[1],
+            'moment_y': u[2],
+            'moment_z': u[3]
         }
     
     def create_ocp(self):         
@@ -461,14 +307,14 @@ class MPC:
         ny = nx+nu
     
         ocp.dims.N = self.N
-        ocp.solver_options.tf = self.traj_time
+        ocp.solver_options.tf = self.N*self.dt
 
-        Qr = np.diag([1,1,1])
-        Qv = np.diag([0.1,0.1,0.1])
+        Qr = np.diag([10, 10, 10])
+        Qv = np.diag([5,5,5])
         Qa = np.diag([0.5,0.5,0.5,0.5])
         Qw = np.diag([0.1,0.1,0.1])
         
-        R = np.diag([0.01, 0.01, 0.01, 0.01])  
+        R = np.diag([0.0001, 0.01, 0.01, 0.01])  
 
         ocp.cost.cost_type = "LINEAR_LS"
 
@@ -481,16 +327,19 @@ class MPC:
             [np.zeros((4,13)),R],
         ])
 
-        ocp.cost.Vx = np.vstack([np.eye(13),np.zeros((4,13))])
-        ocp.cost.Vu = np.vstack([np.eye(4),np.zeros((13,4))])
+        ocp.cost.Vx = np.vstack([np.eye(nx),np.zeros((nu,nx))])
+        ocp.cost.Vu = np.vstack([np.zeros((nx,nu)),np.eye(nu)])
         ocp.cost.W = W
-        #ocp.cost.yref = ??
-
+        ocp.cost.yref = np.zeros((17,1))
+ 
 
         ocp.cost.cost_type_e = "LINEAR_LS"
-        ocp.cost.Vx_e = np.diag([1,1,1,0,0,0,1,1,1,1,0,0,0])
-        ocp.cost.W_e = np.block([[Qr,np.zeros(3,4)],[np.zeros(4,3),Qa]])
-        #ocp.cost.yref_e = ??
+        ocp.cost.Vx_e = np.block([[np.eye(3),np.zeros((3,10))],
+                                  [np.zeros((4,6)),np.eye(4),np.zeros((4,3))]])
+        ocp.cost.W_e = np.block([[Qr,np.zeros((3,4))],
+                                 [np.zeros((4,3)),Qa]
+                                ])
+        ocp.cost.yref_e =  np.zeros((7,1))
 
 
         max_thrust = 4.0 * self.max_thrust_per_motor
@@ -498,11 +347,16 @@ class MPC:
         gamma = self.km/self.kf
         max_torque_z = 4.0 * self.max_thrust_per_motor * gamma
 
+        ocp.constraints.x0 = np.zeros(nx)
         ocp.constraints.lbu = np.array([-max_thrust, -max_torque_x_y, -max_torque_x_y, -max_torque_z])
         ocp.constraints.ubu = np.array([max_thrust, max_torque_x_y, max_torque_x_y, max_torque_z])
         ocp.constraints.idxbu = np.array([0,1,2,3], dtype=int)   
-        ocp.solver_options.integrator_type = "IRK"
-
+        ocp.solver_options.integrator_type = "ERK"
+        ocp.solver_options.sim_method_num_stages = 4
+        ocp.solver_options.nlp_solver_type = 'SQP'
+        ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'
+        ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
+        
         return ocp
 
     def make_trajectory(self, traj_type, params):
@@ -645,8 +499,8 @@ if __name__ == "__main__":
         new_state = cf_controller.step_simulation(mpc_output, mpc.trajectory1[step+1])
         
         # Print state every 100 steps
-        # if step % 100 == 0:
-        print(f"Step {step}: Height = {new_state['position'][2]:.3f}m")
+        if step % 10 == 0:
+            print(f"Step {step}: Height = {new_state['position'][2]:.3f}m")
         height.append(new_state['position'][2])
     current_state = cf_controller.get_state()
     current_state = np.concatenate([current_state['position'].ravel(), current_state['velocity'].ravel(), current_state['orientation'].ravel(), current_state['angular_velocity'].ravel()])
@@ -672,7 +526,7 @@ if __name__ == "__main__":
     ax.set_zlabel('Z [m]')
     ax.set_title('3D Quadrotor Trajectory')
 
-    ax.set_zlim(-3, 0.5)
+    # ax.set_zlim(0, 1)
 
     # Plot the reference trajectory
     ax.plot(traj_plot1[:, 0], traj_plot1[:, 1], traj_plot1[:, 2], '--', label='Reference Trajectory for 1', color='r')

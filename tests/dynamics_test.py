@@ -13,7 +13,7 @@ class Test_Dynamics(unittest.TestCase):
 
     def __init__(self, methodName = "runTest"):
         super().__init__(methodName)
-        self.show_plots = False
+        self.show_plots = True
     def test_straight_up(self):
 
         model = quadrotor_model_auto()

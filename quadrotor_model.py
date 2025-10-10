@@ -21,9 +21,9 @@ def quadrotor_model_auto() -> AcadosModel:
     model_name = 'quadrotor'
     
     g = 9.81
-    Ixx = 1.4
-    Iyy = 1.4
-    Izz = 2.17
+    Ixx = 1.4e-5
+    Iyy = 1.4e-5
+    Izz = 2.17e-5
     l = 0.046
     m = 0.027
     mu = 0.73575
@@ -75,6 +75,7 @@ def quadrotor_model_auto() -> AcadosModel:
     model.f_expl_expr = f_expl
     model.f_impl_expr = X_dot - f_expl
     model.x = X
+    model.xdot = X_dot
     model.u = u
     model.p = []
     model.name = model_name
