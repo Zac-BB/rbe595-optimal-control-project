@@ -24,6 +24,7 @@ def quadrotor_model_auto() -> AcadosModel:
     Ixx = 1.4e-5
     Iyy = 1.4e-5
     Izz = 2.17e-5
+    # I = DM(np.diag([Ixx,Iyy,Izz]))
     l = 0.046
     m = 0.027
     mu = 0.73575

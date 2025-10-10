@@ -1,6 +1,7 @@
 import pybullet as p
 import pybullet_data
 import numpy as np
+import scipy.linalg
 import time
 import math
 
@@ -174,10 +175,22 @@ class CrazyflieController:
 
 class MPC:
     """ MPC for the drone"""
-    def __init__(self,target_height):
+    def __init__(self,target_height=None):
         print("init")
-        self.N = 20 
-        self.dt = 0.1
+
+
+        self.Qr = np.diag([1000,1000,1000])
+        self.Qv = np.diag([100,100,100])
+        self.Qq = np.diag([100,100,100,100])
+        self.Qw = np.diag([100,100,100])
+        self.R = np.diag([0.1,10,10,10])
+        self.Pr = 3*self.Qr
+        self.Pv = self.Qv
+        self.Pq = self.Qq
+        self.Pw = self.Qw 
+        self.N  = 20 
+        self.dt = 0.1   
+        
         self.traj_time = 2.0
 
         self.mass = 0.027 # 0.027  # kg
@@ -191,30 +204,25 @@ class MPC:
         self.target_height = target_height
         self.sim_steps = int(self.traj_time / self.dt)
 
-        params = {
-            't': [0, self.traj_time],
-            'q': [[0.0, 0.0, 0.0], [0.0, 0.0, self.target_height]],
-            'v': [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-            'a': [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-            'dt': self.dt
-        }
+        params  = {
+            't'  : [0, 10],
+            'q'  : [[0, 0, 0], [1, 1, 1]],
+            'v'  : [[0, 0, 0], [0, 0, 0]],
+            'a'  : [[0, 0, 0], [0, 0, 0]],
+            'dt' : self.dt
+        } 
+        r_traj = self.make_trajectory('quintic', params)
         
-        traj = self.make_trajectory('quintic', params)
-        self.t = traj['t']
-        n_points = len(traj['t'])
-        self.trajectory1 = np.zeros((n_points, 13))
-
-        self.trajectory1[:, 0:3] = traj['q']  # x, y, z
-        self.trajectory1[:, 3:6] = traj['v']  # vx, vy, vz
+        self.sim_steps = r_traj['t'].shape[0]-1
+        attitude = np.hstack((np.ones((self.sim_steps+1,1)),np.zeros((self.sim_steps+1,6)) ))
+        self.trajectory1 = np.concat([r_traj['q'], r_traj['v'], attitude], axis=1)
         
-        self.trajectory1[:, 6] = 1.0  # qw
-        self.trajectory1[:, 7:10] = 0.0  # qx, qy, qz
-        
-        self.trajectory1[:, 10:13] = 0.0 # wx, wy, wz
+        self.simX1 = np.zeros((self.sim_steps,13))
+        self.ocp = self.create_ocp()
+        self.ocp_solver = AcadosOcpSolver(self.ocp)
 
 
         self.ocp = self.create_ocp()
-        # self.solver = AcadosOcpSolver(self.ocp)
         self.ocp_solver = AcadosOcpSolver(self.ocp, json_file=f'{self.ocp.model.name}_ocp.json', verbose=False)
         self.simX1 = np.zeros((self.sim_steps, 13))
         self.simU = np.zeros((self.sim_steps, 4))
@@ -233,63 +241,23 @@ class MPC:
         """
 
 
-        # self.ocp_solver.set(0, "x", current_state)
+        
         self.ocp_solver.set(0, "lbx", current_state)
         self.ocp_solver.set(0, "ubx", current_state)
+        self.ocp_solver.set(0, "x", current_state)
 
+        get_idx = lambda i : min(step+i,self.sim_steps)
+        for i in range(1, self.N):
+            y_ref_i = np.concat([self.trajectory1[get_idx(i), :],[self.mass*9.81] ,np.zeros((3,))])
+            self.ocp_solver.cost_set(i, 'yref', y_ref_i) 
 
-        # r_ref = np.array([0,0,self.target_height]).reshape(3,1)
-        # v_ref = np.array([0,0,0]).reshape(3,1)
-        # psi_ref = np.array([1,0,0,0]).reshape(4,1)
-        # psi_dot_ref = np.array([0,0,0]).reshape(3,1) #forced 
-        # 
-        # for i in range(self.N):
-        #     yref = np.vstack([r_ref,v_ref,psi_ref,psi_dot_ref,u0])
-        #     self.ocp_solver.set(i, "yref", yref)
-
-
-        for i in range(self.N):
-            traj_idx = min(step + i, len(self.trajectory1) - 1)
-            r_ref = self.trajectory1[traj_idx, 0:3].reshape(3,1)
-            v_ref = self.trajectory1[traj_idx, 3:6].reshape(3,1)
-            psi_ref = np.array([1,0,0,0]).reshape(4,1)
-            psi_dot_ref = np.array([0,0,0]).reshape(3,1)
-            u_0 = np.array([self.mass * 9.81, 0, 0, 0]).reshape(4,1)  
-            yref = np.vstack([r_ref, v_ref, psi_ref, psi_dot_ref, u_0])
-            self.ocp_solver.set(i, "yref", yref)
-
-        yref_e = np.vstack([r_ref,psi_ref])
-        self.ocp_solver.set(self.N, "yref", yref_e)
-        # self.ocp_solver.set(self.N, "yref_e", yref_e)
-
-
-
-
-        # self.ocp.cost.yref = np.vstack([r_ref,v_ref,psi_ref,psi_dot_ref,u0])
-        # self.ocp.cost.yref_e = np.vstack([r_ref,psi_ref])
-        # self.ocp.constraints.x0 = current_state
-
-
-
-
-
+        
+        self.ocp_solver.cost_set(self.N, 'yref', self.trajectory1[get_idx(self.N), :])
 
         status = self.ocp_solver.solve()
-
         if status != 0:
             print(f"[MPC] Solver failed with status: {status}")
-
-        u = self.ocp_solver.get(0, "u")
-        
-        # u  = self.ocp_solver.solve_for_x0(current_state)
-        # status = self.ocp_solver.get_status()
-        # # status = self.ocp_solver.solve()
-        # self.ocp_solver.print_statistics()
-        # # if(status):
-        # # u_opt = self.ocp_solver.get(0, "u")
-        print("U: {}".format(u))
-        
-
+        u = self.ocp_solver.get(0, "u")   
 
         return {
             'thrust':   u[0],
@@ -298,64 +266,61 @@ class MPC:
             'moment_z': u[3]
         }
     
-    def create_ocp(self):         
+    def create_ocp(self):
         ocp = AcadosOcp()
         model = quadrotor_model_auto()
         ocp.model = model
+        
+        
         nx = model.x.rows()
         nu = model.u.rows()
-        ny = nx+nu
-    
-        ocp.dims.N = self.N
-        ocp.solver_options.tf = self.N*self.dt
+        ny = nx + nu
 
-        Qr = np.diag([10, 10, 10])
-        Qv = np.diag([5,5,5])
-        Qa = np.diag([0.5,0.5,0.5,0.5])
-        Qw = np.diag([0.1,0.1,0.1])
+        ocp.solver_options.N_horizon = self.N
         
-        R = np.diag([0.0001, 0.01, 0.01, 0.01])  
-
+        Q = scipy.linalg.block_diag(self.Qr, self.Qv, self.Qq, self.Qw)
+        P = scipy.linalg.block_diag(self.Pr, self.Pv, self.Pq, self.Pw)
+        R = self.R
         ocp.cost.cost_type = "LINEAR_LS"
+        Vx = np.block([[np.eye(nx)],[np.zeros((nu,nx))]])
+        
+        Vu = np.block([[np.zeros((nx,nu))],[np.eye(nu)]])#np.zeros((ny, nu))
 
-
-        W = np.block([
-            [Qr, np.zeros((3,14))],
-            [np.zeros((3,3)), Qv,np.zeros((3,11))],
-            [np.zeros((4,6)), Qa,np.zeros((4,7))],
-            [np.zeros((3,10)), Qw,np.zeros((3,4))],
-            [np.zeros((4,13)),R],
-        ])
-
-        ocp.cost.Vx = np.vstack([np.eye(nx),np.zeros((nu,nx))])
-        ocp.cost.Vu = np.vstack([np.zeros((nx,nu)),np.eye(nu)])
-        ocp.cost.W = W
-        ocp.cost.yref = np.zeros((17,1))
- 
+        # Vx[:nx, :nx] = np.eye(nx)
+        # Vu[nx:, :]     = np.eye(nu)
+        ocp.cost.W = scipy.linalg.block_diag(Q, R)
+        ocp.cost.Vx = Vx
+        ocp.cost.Vu = Vu
+        ocp.cost.yref = np.zeros((ny, ))
 
         ocp.cost.cost_type_e = "LINEAR_LS"
-        ocp.cost.Vx_e = np.block([[np.eye(3),np.zeros((3,10))],
-                                  [np.zeros((4,6)),np.eye(4),np.zeros((4,3))]])
-        ocp.cost.W_e = np.block([[Qr,np.zeros((3,4))],
-                                 [np.zeros((4,3)),Qa]
-                                ])
-        ocp.cost.yref_e =  np.zeros((7,1))
+        Vxe = np.eye(nx)
+        ocp.cost.Vx_e = Vxe
+        ocp.cost.W_e = P
+        ocp.cost.yref_e = np.zeros((nx, ))
+        
+        
+        
+        ocp.solver_options.qp_solver        = 'FULL_CONDENSING_HPIPM'
+        ocp.solver_options.integrator_type  = 'ERK'
+        ocp.solver_options.nlp_solver_type  = 'SQP'
+        ocp.solver_options.tf               = self.N*self.dt
 
 
-        max_thrust = 4.0 * self.max_thrust_per_motor
-        max_torque_x_y = 2.0 * self.max_thrust_per_motor * self.arm_length
-        gamma = self.km/self.kf
-        max_torque_z = 4.0 * self.max_thrust_per_motor * gamma
-
-        ocp.constraints.x0 = np.zeros(nx)
-        ocp.constraints.lbu = np.array([-max_thrust, -max_torque_x_y, -max_torque_x_y, -max_torque_z])
-        ocp.constraints.ubu = np.array([max_thrust, max_torque_x_y, max_torque_x_y, max_torque_z])
-        ocp.constraints.idxbu = np.array([0,1,2,3], dtype=int)   
-        ocp.solver_options.integrator_type = "IRK"
-        # ocp.solver_options.sim_method_num_stages = 4
-        ocp.solver_options.nlp_solver_type = 'SQP'
-        ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'
-        ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
+        umax = 0.73575 * np.array([1, 0.0397, 0.0397, 0.02513])
+        umin = -0.73575 * np.array([0, 0.0397, 0.0397, 0.02513])
+        #hmax = np.deg2rad(np.array([45, 45]))
+        wmax = 0.5*np.array([1,1,1])
+        
+        ocp.constraints.x0      = np.zeros((nx, ))
+        ocp.constraints.lbu     = umin
+        ocp.constraints.ubu     = umax
+        ocp.constraints.idxbu   = np.array(range(nu))
+        #ocp.constraints.lh      = -hmax
+        #ocp.constraints.uh      = hmax
+        # ocp.constraints.lbx     = -wmax
+        # ocp.constraints.ubx     = wmax
+        # ocp.constraints.idxbx   = np.array([10, 11, 12])
         
         return ocp
 
@@ -446,6 +411,9 @@ class MPC:
         axs[0][0].plot(time, x_traj[:, 0], label='x')
         axs[0][0].plot(time, x_traj[:, 1], label='y')
         axs[0][0].plot(time, x_traj[:, 2], label='z')
+        axs[0][0].plot(time, self.trajectory1[1:,0],label='x_ref')
+        axs[0][0].plot(time, self.trajectory1[1:,1],label='y_ref')
+        axs[0][0].plot(time, self.trajectory1[1:,2],label='z_ref')
         axs[0][0].set_ylabel('Position')
         axs[0][0].grid(True)
         axs[0][0].legend()
@@ -478,7 +446,8 @@ class MPC:
         plt.show()
 
     def plot_states_v_time(self):
-        self.plot_traj(self.t,self.simX1)
+        t = np.linspace(0,self.traj_time,self.simX1.shape[0]+1)
+        self.plot_traj(t,self.simX1)
 
 # Main simulation loop
 if __name__ == "__main__":
