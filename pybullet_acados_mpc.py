@@ -351,8 +351,8 @@ class MPC:
         ocp.constraints.lbu = np.array([-max_thrust, -max_torque_x_y, -max_torque_x_y, -max_torque_z])
         ocp.constraints.ubu = np.array([max_thrust, max_torque_x_y, max_torque_x_y, max_torque_z])
         ocp.constraints.idxbu = np.array([0,1,2,3], dtype=int)   
-        ocp.solver_options.integrator_type = "ERK"
-        ocp.solver_options.sim_method_num_stages = 4
+        ocp.solver_options.integrator_type = "IRK"
+        # ocp.solver_options.sim_method_num_stages = 4
         ocp.solver_options.nlp_solver_type = 'SQP'
         ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'
         ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'

@@ -164,7 +164,7 @@ void quadrotor_acados_create_set_plan(ocp_nlp_plan_t* nlp_solver_plan, const int
     for (int i = 0; i < N; i++)
     {
         nlp_solver_plan->nlp_dynamics[i] = CONTINUOUS_MODEL;
-        nlp_solver_plan->sim_solver_plan[i].sim_solver = ERK;
+        nlp_solver_plan->sim_solver_plan[i].sim_solver = IRK;
     }
 
     nlp_solver_plan->nlp_constraints[0] = BGH;
@@ -345,22 +345,21 @@ void quadrotor_acados_create_setup_functions(quadrotor_solver_capsule* capsule)
 
 
     
-        // explicit ode
-        capsule->expl_vde_forw = (external_function_external_param_casadi *) malloc(sizeof(external_function_external_param_casadi)*N);
+        // implicit dae
+        capsule->impl_dae_fun = (external_function_external_param_casadi *) malloc(sizeof(external_function_external_param_casadi)*N);
         for (int i = 0; i < N; i++) {
-            MAP_CASADI_FNC(expl_vde_forw[i], quadrotor_expl_vde_forw);
+            MAP_CASADI_FNC(impl_dae_fun[i], quadrotor_impl_dae_fun);
         }
 
-        capsule->expl_ode_fun = (external_function_external_param_casadi *) malloc(sizeof(external_function_external_param_casadi)*N);
+        capsule->impl_dae_fun_jac_x_xdot_z = (external_function_external_param_casadi *) malloc(sizeof(external_function_external_param_casadi)*N);
         for (int i = 0; i < N; i++) {
-            MAP_CASADI_FNC(expl_ode_fun[i], quadrotor_expl_ode_fun);
+            MAP_CASADI_FNC(impl_dae_fun_jac_x_xdot_z[i], quadrotor_impl_dae_fun_jac_x_xdot_z);
         }
 
-        capsule->expl_vde_adj = (external_function_external_param_casadi *) malloc(sizeof(external_function_external_param_casadi)*N);
+        capsule->impl_dae_jac_x_xdot_u_z = (external_function_external_param_casadi *) malloc(sizeof(external_function_external_param_casadi)*N);
         for (int i = 0; i < N; i++) {
-            MAP_CASADI_FNC(expl_vde_adj[i], quadrotor_expl_vde_adj);
+            MAP_CASADI_FNC(impl_dae_jac_x_xdot_u_z[i], quadrotor_impl_dae_jac_x_xdot_u_z);
         }
-
     
     } // N > 0
 
@@ -452,9 +451,11 @@ void quadrotor_acados_setup_nlp_in(quadrotor_solver_capsule* capsule, const int 
     /**** Dynamics ****/
     for (int i = 0; i < N; i++)
     {
-        ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_vde_forw", &capsule->expl_vde_forw[i]);
-        ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_ode_fun", &capsule->expl_ode_fun[i]);
-        ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_vde_adj", &capsule->expl_vde_adj[i]);
+        ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "impl_dae_fun", &capsule->impl_dae_fun[i]);
+        ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i,
+                                   "impl_dae_fun_jac_x_xdot_z", &capsule->impl_dae_fun_jac_x_xdot_z[i]);
+        ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i,
+                                   "impl_dae_jac_x_xdot_u", &capsule->impl_dae_jac_x_xdot_u_z[i]);
     }
 
     /**** Cost ****/
@@ -1073,6 +1074,8 @@ int quadrotor_acados_reset(quadrotor_solver_capsule* capsule, int reset_qp_solve
         if (i<N)
         {
             ocp_nlp_out_set(nlp_config, nlp_dims, nlp_out, nlp_in, i, "pi", buffer);
+            ocp_nlp_set(nlp_solver, i, "xdot_guess", buffer);
+            ocp_nlp_set(nlp_solver, i, "z_guess", buffer);
         }
     }
     // get qp_status: if NaN -> reset memory
@@ -1165,13 +1168,13 @@ int quadrotor_acados_free(quadrotor_solver_capsule* capsule)
     // dynamics
     for (int i = 0; i < N; i++)
     {
-        external_function_external_param_casadi_free(&capsule->expl_vde_forw[i]);
-        external_function_external_param_casadi_free(&capsule->expl_ode_fun[i]);
-        external_function_external_param_casadi_free(&capsule->expl_vde_adj[i]);
+        external_function_external_param_casadi_free(&capsule->impl_dae_fun[i]);
+        external_function_external_param_casadi_free(&capsule->impl_dae_fun_jac_x_xdot_z[i]);
+        external_function_external_param_casadi_free(&capsule->impl_dae_jac_x_xdot_u_z[i]);
     }
-    free(capsule->expl_vde_adj);
-    free(capsule->expl_vde_forw);
-    free(capsule->expl_ode_fun);
+    free(capsule->impl_dae_fun);
+    free(capsule->impl_dae_fun_jac_x_xdot_z);
+    free(capsule->impl_dae_jac_x_xdot_u_z);
 
     // cost
 

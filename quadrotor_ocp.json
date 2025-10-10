@@ -1835,9 +1835,11 @@
         "nz": 0
     },
     "external_function_files_model": [
-        "quadrotor_model/quadrotor_expl_ode_fun.c",
-        "quadrotor_model/quadrotor_expl_vde_forw.c",
-        "quadrotor_model/quadrotor_expl_vde_adj.c"
+        "quadrotor_model/quadrotor_impl_dae_fun.c",
+        "quadrotor_model/quadrotor_impl_dae_fun_jac_x_xdot_z.c",
+        "quadrotor_model/quadrotor_impl_dae_fun_jac_x_xdot_u_z.c",
+        "quadrotor_model/quadrotor_impl_dae_fun_jac_x_xdot_u.c",
+        "quadrotor_model/quadrotor_impl_dae_jac_x_xdot_u_z.c"
     ],
     "external_function_files_ocp": [],
     "json_file": "quadrotor_ocp.json",
@@ -2004,7 +2006,7 @@
         "globalization_use_SOC": 0,
         "hessian_approx": "GAUSS_NEWTON",
         "hpipm_mode": "BALANCE",
-        "integrator_type": "ERK",
+        "integrator_type": "IRK",
         "levenberg_marquardt": 0.0,
         "log_dual_step_norm": false,
         "log_primal_step_norm": false,
