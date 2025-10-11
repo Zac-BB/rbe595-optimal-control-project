@@ -133,6 +133,7 @@ class CrazyflieController:
         p.applyExternalForce(self.cf_id,-1,motor_forces[1],[self.arm_length/math.sqrt(2), -self.arm_length/math.sqrt(2),0.], p.LINK_FRAME)
         p.applyExternalForce(self.cf_id,-1,motor_forces[2],[-self.arm_length/math.sqrt(2), self.arm_length/math.sqrt(2),0.], p.LINK_FRAME)
         p.applyExternalForce(self.cf_id,-1,motor_forces[3],[-self.arm_length/math.sqrt(2), -self.arm_length/math.sqrt(2),0.], p.LINK_FRAME)
+        # p.applyExternalForce(self.cf_id,-1,[0.000008,0,0],[0,0,0],p.WORLD_FRAME)
 
     def get_state(self):
         """Get current state of the Crazyflie for MPC feedback"""
@@ -179,10 +180,10 @@ class MPC:
         print("init")
 
 
-        self.Qr = np.diag([1500,1500,1500])
+        self.Qr = np.diag([1000,1000,1000])
         self.Qv = np.diag([100,100,100])
         self.Qq = np.diag([100,100,100,100])
-        self.Qw = np.diag([100,100,100])
+        self.Qw = np.diag([1000,1000,1000])
         self.R = np.diag([0.1,10,10,10])
         self.Pr = 3*self.Qr
         self.Pv = self.Qv
@@ -200,6 +201,7 @@ class MPC:
         self.max_rpm = 21000  # typical max RPM for CF2.0
         omega_max = self.max_rpm * 2*np.pi / 60.0  # rad/s
         self.max_thrust_per_motor = self.kf * (omega_max ** 2)
+        self.solve_times = []
 
         self.target_height = target_height
         self.sim_steps = int(self.traj_time / self.dt)
@@ -212,7 +214,7 @@ class MPC:
                 'dt' : self.dt
             } 
             takeoff = self.make_trajectory('quintic', params)
-            circle = lambda t: np.array([np.cos(t)-1,np.sin(t),target_height,-np.sin(t),np.cos(t),0])
+            circle = lambda t,dt: np.array([np.cos(t)-1,np.sin(t),target_height,-np.sin(t)*dt,np.cos(t)*dt,0])
             params  = {
                 't'  : [0, 10],
                 'q'  : [[0], [2*3.141529]],
@@ -221,7 +223,7 @@ class MPC:
                 'dt' : self.dt
             } 
             quintic_space  = self.make_trajectory('quintic', params)
-            circle_traj = np.vstack([circle(t) for t in quintic_space['q'].ravel()])
+            circle_traj = np.vstack([circle(q,v)  for q, v in zip(quintic_space['q'].ravel(), quintic_space['v'].ravel())])
             pos_traj = np.vstack([np.hstack([takeoff['q'], takeoff['v']]), circle_traj])
 
             self.sim_steps = pos_traj.shape[0]-1
@@ -277,7 +279,7 @@ class MPC:
             self.ocp_solver.cost_set(i, 'yref', y_ref_i) 
 
         
-        self.ocp_solver.cost_set(self.N, 'yref', self.trajectory1[get_idx(self.N), :])
+        self.ocp_solver.cost_set(self.N, 'yref', np.concat([self.trajectory1[get_idx(self.N), 0:3],self.trajectory1[get_idx(self.N), 6:10]]))
 
         status = self.ocp_solver.solve()
         if status != 0:
@@ -304,25 +306,23 @@ class MPC:
         ocp.solver_options.N_horizon = self.N
         
         Q = scipy.linalg.block_diag(self.Qr, self.Qv, self.Qq, self.Qw)
-        P = scipy.linalg.block_diag(self.Pr, self.Pv, self.Pq, self.Pw)
+        
         R = self.R
         ocp.cost.cost_type = "LINEAR_LS"
         Vx = np.block([[np.eye(nx)],[np.zeros((nu,nx))]])
         
-        Vu = np.block([[np.zeros((nx,nu))],[np.eye(nu)]])#np.zeros((ny, nu))
-
-        # Vx[:nx, :nx] = np.eye(nx)
-        # Vu[nx:, :]     = np.eye(nu)
+        Vu = np.block([[np.zeros((nx,nu))],[np.eye(nu)]])
         ocp.cost.W = scipy.linalg.block_diag(Q, R)
         ocp.cost.Vx = Vx
         ocp.cost.Vu = Vu
         ocp.cost.yref = np.zeros((ny, ))
 
         ocp.cost.cost_type_e = "LINEAR_LS"
-        Vxe = np.eye(nx)
+        Vxe = np.block([[np.eye(3),np.zeros((3,10))],[np.zeros((4,6)),np.eye(4),np.zeros((4,3))]])
         ocp.cost.Vx_e = Vxe
+        P = scipy.linalg.block_diag(self.Pr, self.Pq)
         ocp.cost.W_e = P
-        ocp.cost.yref_e = np.zeros((nx, ))
+        ocp.cost.yref_e = np.zeros((7, ))
         
         
         
@@ -332,20 +332,13 @@ class MPC:
         ocp.solver_options.tf               = self.N*self.dt
 
 
-        umax = 0.73575 * np.array([1, 0.0397, 0.0397, 0.02513])
-        umin = -0.73575 * np.array([0, 0.0397, 0.0397, 0.02513])
-        #hmax = np.deg2rad(np.array([45, 45]))
-        wmax = 0.5*np.array([1,1,1])
+        umax = np.array([0.7358, 0.0292, 0.0292, 0.0185])
+        umin = np.array([0, -0.0292, -0.0292, -0.0185])
         
-        ocp.constraints.x0      = np.zeros((nx, ))
-        ocp.constraints.lbu     = umin
-        ocp.constraints.ubu     = umax
-        ocp.constraints.idxbu   = np.array(range(nu))
-        #ocp.constraints.lh      = -hmax
-        #ocp.constraints.uh      = hmax
-        # ocp.constraints.lbx     = -wmax
-        # ocp.constraints.ubx     = wmax
-        # ocp.constraints.idxbx   = np.array([10, 11, 12])
+        ocp.constraints.x0 = np.zeros((nx, ))
+        ocp.constraints.lbu = umin
+        ocp.constraints.ubu = umax
+        ocp.constraints.idxbu = np.array(range(nu))
         
         return ocp
 
@@ -427,58 +420,85 @@ class MPC:
 
         return {'t': times, 'q': q_traj, 'v': v_traj, 'a': a_traj}
 
+    def analyze(self):
+        t = np.linspace(0,self.traj_time,self.simX1.shape[0])
+        pred = self.trajectory1[1:,:]
+        actual = self.simX1
+        error = actual- pred
+        sum_error = np.diag(error.T@error)
+        sum_error = sum_error/actual.shape[0]
 
-    def plot_traj(self,time,x_traj):
-        fig, axs = plt.subplots(2, 2, figsize=(10, 12), sharex=True)
+        rmse = np.sqrt(sum_error)
+        print("rmse: {}".format(rmse))
+        fig, axs = plt.subplots(4,1, figsize=(10, 12), sharex=True)
         fig.suptitle('State vs Time')
         
-        time = time[0:-1]
-        axs[0][0].plot(time, x_traj[:, 0], label='x')
-        axs[0][0].plot(time, x_traj[:, 1], label='y')
-        axs[0][0].plot(time, x_traj[:, 2], label='z')
-        # axs[0][0].plot(time, self.trajectory1[1:,0],label='x_ref')
-        # axs[0][0].plot(time, self.trajectory1[1:,1],label='y_ref')
-        # axs[0][0].plot(time, self.trajectory1[1:,2],label='z_ref')
-        axs[0][0].set_ylabel('Position')
-        axs[0][0].grid(True)
-        axs[0][0].legend()
+        time = t
+        axs[0].plot(time, actual[:, 0], label='x',color='tab:blue')
+        axs[0].plot(time, actual[:, 1], label='y',color='tab:orange')
+        axs[0].plot(time, actual[:, 2], label='z',color='tab:green')
+        axs[0].plot(time, pred[:,0],label='x_ref',color='tab:blue',linestyle='dashed')
+        axs[0].plot(time, pred[:,1],label='y_ref',color='tab:orange',linestyle='dashed')
+        axs[0].plot(time, pred[:,2],label='z_ref',color='tab:green',linestyle='dashed')
+        axs[0].set_ylabel('Position')
+        axs[0].grid(True)
+        axs[0].legend()
 
 
-        axs[0][1].plot(time, x_traj[:, 3], label='vx')
-        axs[0][1].plot(time, x_traj[:, 4], label='vy')
-        axs[0][1].plot(time, x_traj[:, 5] , label='vz')
-        axs[0][1].set_ylabel('Velocity')
-        axs[0][1].grid(True)
-        axs[0][1].legend()
+        axs[1].plot(time, actual[:, 3], label='vx',color='tab:blue')
+        axs[1].plot(time, actual[:, 4], label='vy',color='tab:orange')
+        axs[1].plot(time, actual[:, 5] , label='vz',color='tab:green')
+        axs[1].plot(time, pred[:,3],label='vx_ref',color='tab:blue',linestyle='dashed')
+        axs[1].plot(time, pred[:,4],label='vy_ref',color='tab:orange',linestyle='dashed')
+        axs[1].plot(time, pred[:,5],label='vz_ref',color='tab:green',linestyle='dashed')
+        axs[1].set_ylabel('Velocity')
+        axs[1].grid(True)
+        axs[1].legend()
 
-        axs[1][0].plot(time, x_traj[:, 6], label='qw')
-        axs[1][0].plot(time, x_traj[:, 7], label='qx')
-        axs[1][0].plot(time, x_traj[:, 8], label='qy')
-        axs[1][0].plot(time, x_traj[:, 9], label='qy')
-        axs[1][0].set_ylabel('Attitude')
-        axs[1][0].grid(True)
-        axs[1][0].legend()
+        axs[2].plot(time, actual[:, 6], label='qw',color='tab:blue')
+        axs[2].plot(time, actual[:, 7], label='qx',color='tab:orange')
+        axs[2].plot(time, actual[:, 8], label='qy',color='tab:green')
+        axs[2].plot(time, actual[:, 9], label='qy',color='tab:red')
+        axs[2].plot(time, pred[:,6],label='qw_ref',color='tab:blue',linestyle='dashed')
+        axs[2].plot(time, pred[:,7],label='qx_ref',color='tab:orange',linestyle='dashed')
+        axs[2].plot(time, pred[:,8],label='qy_ref',color='tab:green',linestyle='dashed')
+        axs[2].plot(time, pred[:,9],label='qy_ref',color='tab:red',linestyle='dashed')
+        axs[2].set_ylabel('Attitude')
+        axs[2].grid(True)
+        axs[2].legend()
 
 
-        axs[1][1].plot(time, x_traj[:, 10], label='wx')
-        axs[1][1].plot(time, x_traj[:,11], label='wy')
-        axs[1][1].plot(time, x_traj[:,12], label='wz')
-        axs[1][1].set_ylabel('Ang. Velocity')
-        axs[1][1].set_xlabel('Time [s]')
-        axs[1][1].grid(True)
-        axs[1][1].legend()
+        axs[3].plot(time, actual[:, 10], label='wx',color='tab:blue')
+        axs[3].plot(time, actual[:,11], label='wy',color='tab:orange')
+        axs[3].plot(time, actual[:,12], label='wz',color='tab:green')
+        axs[3].plot(time, pred[:,10],label='wx_ref',color='tab:blue',linestyle='dashed')
+        axs[3].plot(time, pred[:,11],label='wy_ref',color='tab:orange',linestyle='dashed')
+        axs[3].plot(time, pred[:,12],label='wz_ref',color='tab:green',linestyle='dashed')
+        axs[3].set_ylabel('Ang. Velocity')
+        axs[3].set_xlabel('Time [s]')
+        axs[3].grid(True)
+        axs[3].legend()
         plt.tight_layout(rect=[0, 0, 1, 0.96])
+
+        plt.figure()
+        # with open("solveTimesSPI.txt", "a") as f:
+        #     np.savetxt(f, self.solve_times)  
+        loaded = self.solve_times #np.loadtxt("solveTimesSPI.txt")
+        print(f'data points: {len(loaded)}')
+        print(f'mean: {np.mean(loaded)}, standard Devation: {np.std(loaded)}')
+        plt.hist(loaded, bins=30, color='skyblue', edgecolor='k')
+        plt.xlabel("Solve Time [ms]")
+        plt.ylabel("Frequency")
+        plt.title("Histogram of NMPC Solve Times SPI ")
         plt.show()
 
-    def plot_states_v_time(self):
-        t = np.linspace(0,self.traj_time,self.simX1.shape[0]+1)
-        self.plot_traj(t,self.simX1)
+        print("hello")
 
 # Main simulation loop
 if __name__ == "__main__":
     # Initialize controller and MPC
     cf_controller = CrazyflieController()
-    mpc = MPC(target_height=0.5)
+    mpc = MPC(target_height=None)
     height = []
     # Simulation loop
     for step in range(mpc.sim_steps):
@@ -486,9 +506,11 @@ if __name__ == "__main__":
         current_state = cf_controller.get_state()
         current_state = np.concatenate([current_state['position'].ravel(), current_state['velocity'].ravel(), current_state['orientation'].ravel(), current_state['angular_velocity'].ravel()])
         mpc.simX1[step,:] = current_state
-        
+        start_time = time.perf_counter()
         mpc_output = mpc.solve(step, current_state)
-
+        end_time = time.perf_counter()
+        elapsed_timne = end_time - start_time
+        mpc.solve_times.append(elapsed_timne*1000)
         # Apply control and step simulation
         new_state = cf_controller.step_simulation(mpc_output, mpc.trajectory1[step+1])
         
@@ -540,7 +562,7 @@ if __name__ == "__main__":
     plt.show()
     
     p.disconnect()
-    print(mpc.simX1[:,0:3])
-    np.savetxt('height.csv', height, delimiter=',')
+    # print(mpc.simX1[:,0:3])
+    # np.savetxt('height.csv', height, delimiter=',')
 
-    mpc.plot_states_v_time()
+    mpc.analyze()
